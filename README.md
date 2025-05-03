@@ -1,4 +1,4 @@
-# INVESTMENT Project
+# CROWDFARM Project
 
 A Laravel-based investment management system that helps users track and manage their investments efficiently. 
 
