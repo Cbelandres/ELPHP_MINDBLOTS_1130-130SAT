@@ -1,6 +1,6 @@
 # INVESTMENT Project
 
-A Laravel-based investment management system that helps users track and manage their investments efficiently. This platform provides comprehensive tools for monitoring portfolios, analyzing performance, and making informed investment decisions.
+A Laravel-based investment management system that helps users track and manage their investments efficiently. 
 
 ## 🚀 Features
 
@@ -9,33 +9,14 @@ A Laravel-based investment management system that helps users track and manage t
 - Investment Portfolio Management
 - Real-time Investment Tracking
 - Secure API Endpoints
-- Modern and Responsive UI
 
-### Investment Management
-- Portfolio Performance Analytics
-- Asset Allocation Tracking
-- Investment Transaction History
-- Dividend and Interest Tracking
-- Risk Assessment Tools
-- Investment Goal Setting
-- Market Data Integration
-- Performance Reports and Charts
-
-### User Experience
-- Dashboard with Key Metrics
-- Customizable Watchlists
-- Investment Alerts and Notifications
-- Exportable Reports
-- Mobile-Responsive Design
 
 ## 📋 Prerequisites
 
 - PHP >= 8.2
 - Composer
 - Node.js & NPM
-- SQLite (or your preferred database)
-- Redis (for caching and queues)
-- Mail Server (for notifications)
+- mysQL
 
 ## 🛠️ Installation
 
@@ -122,27 +103,18 @@ QUEUE_CONNECTION=redis
 
 The API documentation is available at `/api/documentation` when running the application locally. Key endpoints include:
 
-- `/api/auth/*` - Authentication endpoints
-- `/api/portfolio/*` - Portfolio management
-- `/api/investments/*` - Investment operations
-- `/api/analytics/*` - Performance analytics
+- `/api/login/` - Login endpoints
+- `/api/farmers/register` - Register Farmer
+- `/api/admin/register` - Register Admin
+- `/api/investors/register` - Register Investor
+- `/api/campaigns` - Campaign Creation by Farmer
+- `/api/campaigns/{campaign_id}/approve` - Approve the Campaign ID by Admin
+- `/api/campaigns/{campaign_id}/fund` - Investor to fund the Campaign
+- `/api/admin/dashboard` - Admin Reports
+- `/api/farmer/campaigns/report` - Farmer Campaigns Reports
+- `/api/investor/dashboard` - Investor Reports
 
-## 🧪 Testing
 
-Run the test suite:
-```bash
-php artisan test
-```
-
-Run specific test types:
-```bash
-# Run feature tests
-php artisan test --testsuite=Feature
-
-# Run unit tests
-php artisan test --testsuite=Unit
-
-# Run with coverage
 php artisan test --coverage
 ```
 
@@ -162,60 +134,3 @@ php artisan test --coverage
 - FakerPHP ^1.23
 - Laravel Telescope (for debugging)
 
-## 🔐 Security
-
-- CSRF Protection
-- XSS Protection
-- SQL Injection Prevention
-- Secure Authentication with Sanctum
-- Input Validation
-- Rate Limiting
-- Two-Factor Authentication (optional)
-- API Token Management
-- Secure Password Policies
-
-## 📝 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-### Development Workflow
-- Follow PSR-12 coding standards
-- Write tests for new features
-- Update documentation as needed
-- Use conventional commits
-- Keep the codebase clean and maintainable
-
-## 📞 Support
-
-For support, please:
-1. Check the [documentation](docs/)
-2. Search existing issues
-3. Open a new issue with:
-   - Detailed description
-   - Steps to reproduce
-   - Expected vs actual behavior
-   - Environment details
-
-## 🙏 Acknowledgments
-
-- Laravel Framework
-- All contributors who have helped shape this project
-- Open-source community
-- Financial data providers
-
-## 📈 Roadmap
-
-- [ ] Enhanced Portfolio Analytics
-- [ ] Mobile Application
-- [ ] Advanced Risk Analysis
-- [ ] AI-powered Investment Recommendations
-- [ ] Social Investment Features
-- [ ] Multi-currency Support
