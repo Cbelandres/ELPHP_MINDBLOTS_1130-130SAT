@@ -8,299 +8,339 @@ use App\Models\Investment;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ReportController extends Controller
 {
-    // Admin Reports
+    /**
+     * Get admin dashboard data
+     */
     public function adminDashboard()
     {
         try {
-            // Get all users with their details
-            $users = User::select('id', 'name', 'email', 'phone', 'role', 'created_at')
-                        ->get()
-                        ->map(function ($user) {
-                            return [
-                                'id' => $user->id,
-                                'name' => $user->name,
-                                'email' => $user->email,
-                                'phone' => $user->phone,
-                                'role' => $user->role,
-                                'joined_at' => $user->created_at->format('Y-m-d H:i:s'),
-                                'total_campaigns' => $user->role === 'farmer' ? $user->projects->count() : 0,
-                                'total_investments' => $user->role === 'investor' ? $user->investments->sum('amount') : 0
-                            ];
-                        });
+            $dashboardData = [
+                'users' => $this->getUserStatistics(),
+                'campaigns' => $this->getCampaignStatistics(),
+                'total_funds' => $this->getTotalFunds(),
+                'funds_by_status' => $this->getFundsByStatus()
+            ];
 
-            // Get all campaigns with their details and funds
-            $campaigns = Campaign::with(['project', 'investments'])
-                                ->get()
-                                ->map(function ($campaign) {
-                                    $totalFunds = $campaign->investments->sum('amount');
-                                    $investorCount = $campaign->investments->count();
-                                    $fundingProgress = $campaign->target_amount > 0 
-                                        ? round(($totalFunds / $campaign->target_amount) * 100, 2)
-                                        : 0;
-
-                                    return [
-                                        'id' => $campaign->id,
-                                        'project_name' => $campaign->project->name,
-                                        'farmer_name' => $campaign->project->farmer->name,
-                                        'target_amount' => $campaign->target_amount,
-                                        'start_date' => $campaign->start_date->format('Y-m-d'),
-                                        'end_date' => $campaign->end_date->format('Y-m-d'),
-                                        'status' => $campaign->status,
-                                        'funding_details' => [
-                                            'total_funds' => $totalFunds,
-                                            'investor_count' => $investorCount,
-                                            'funding_progress' => $fundingProgress . '%',
-                                            'remaining_amount' => max(0, $campaign->target_amount - $totalFunds)
-                                        ],
-                                        'investments' => $campaign->investments->map(function ($investment) {
-                                            return [
-                                                'investor_name' => $investment->investor->name,
-                                                'amount' => $investment->amount,
-                                                'invested_at' => $investment->created_at->format('Y-m-d H:i:s')
-                                            ];
-                                        })
-                                    ];
-                                });
-
-            // Get total funds raised across all campaigns
-            $totalFunds = Investment::sum('amount');
-
-            // Group funds by campaign status
-            $fundsByStatus = Campaign::with('investments')
-                                    ->get()
-                                    ->groupBy('status')
-                                    ->map(function ($campaigns) {
-                                        return $campaigns->sum(function ($campaign) {
-                                            return $campaign->investments->sum('amount');
-                                        });
-                                    });
-
-            return response()->json([
-                'message' => 'Admin dashboard data retrieved successfully',
-                'data' => [
-                    'users' => $users,
-                    'campaigns' => $campaigns,
-                    'total_funds' => $totalFunds,
-                    'funds_by_status' => $fundsByStatus
-                ]
-            ]);
+            return $this->sendSuccessResponse('Admin dashboard data retrieved successfully', $dashboardData);
         } catch (\Exception $e) {
-            \Log::error('Admin dashboard error: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
-            return response()->json([
-                'message' => 'Failed to retrieve admin dashboard data',
-                'error' => $e->getMessage()
-            ], 500);
+            $this->logError('Admin dashboard error', $e);
+            return $this->sendErrorResponse('Failed to retrieve admin dashboard data', $e->getMessage());
         }
     }
 
+    /**
+     * Get admin campaigns report
+     */
     public function adminCampaignsReport()
     {
-        $campaigns = Campaign::with(['farmer', 'investments', 'investors'])
-            ->withCount('investments')
-            ->withSum('investments', 'amount')
-            ->get();
-
-        return response()->json(['campaigns' => $campaigns]);
+        $campaigns = $this->getDetailedCampaigns();
+        return $this->sendSuccessResponse('Campaigns report retrieved successfully', ['campaigns' => $campaigns]);
     }
 
-    // Farmer Reports
+    /**
+     * Get farmer dashboard data
+     */
     public function farmerDashboard(Request $request)
     {
         $farmer = $request->user();
-        
-        $totalCampaigns = Campaign::where('farmer_id', $farmer->id)->count();
-        $totalInvestments = Investment::whereHas('campaign', function($query) use ($farmer) {
-            $query->where('farmer_id', $farmer->id);
-        })->sum('amount');
+        $dashboardData = [
+            'total_campaigns' => $this->getFarmerCampaignCount($farmer),
+            'total_investments' => $this->getFarmerTotalInvestments($farmer),
+            'campaigns' => $this->getFarmerCampaigns($farmer)
+        ];
 
-        $campaigns = Campaign::where('farmer_id', $farmer->id)
-            ->with(['investments', 'investors'])
-            ->withSum('investments', 'amount')
-            ->get();
-
-        return response()->json([
-            'total_campaigns' => $totalCampaigns,
-            'total_investments' => $totalInvestments,
-            'campaigns' => $campaigns,
-        ]);
+        return $this->sendSuccessResponse('Farmer dashboard data retrieved successfully', $dashboardData);
     }
 
+    /**
+     * Get farmer campaign report
+     */
     public function farmerCampaignReport(Request $request, $campaignId)
     {
-        $campaign = Campaign::where('farmer_id', $request->user()->id)
-            ->with(['investments', 'investors'])
-            ->withSum('investments', 'amount')
-            ->findOrFail($campaignId);
+        $campaign = $this->getFarmerCampaignDetails($request->user(), $campaignId);
+        $investmentDetails = $this->getCampaignInvestmentDetails($campaign);
 
-        $investmentDetails = $campaign->investments()
-            ->with('investor')
-            ->orderBy('created_at', 'desc')
-            ->get();
-
-        return response()->json([
+        return $this->sendSuccessResponse('Campaign report retrieved successfully', [
             'campaign' => $campaign,
-            'investment_details' => $investmentDetails,
+            'investment_details' => $investmentDetails
         ]);
     }
 
+    /**
+     * Get farmer campaigns report
+     */
     public function farmerCampaignsReport(Request $request)
     {
         try {
             $farmer = $request->user();
             
-            if ($farmer->role !== 'farmer') {
-                return response()->json([
-                    'message' => 'Unauthorized',
-                    'error' => 'Only farmers can access this report.'
-                ], 403);
+            if (!$this->isFarmer($farmer)) {
+                return $this->sendErrorResponse('Unauthorized', 'Only farmers can access this report.', 403);
             }
 
-            $campaigns = Campaign::whereHas('project', function($query) use ($farmer) {
-                    $query->where('farmer_id', $farmer->id);
-                })
-                ->with(['project', 'investments', 'investments.investor'])
-                ->get()
-                ->map(function ($campaign) {
-                    $totalFunds = $campaign->investments->sum('amount');
-                    $investorCount = $campaign->investments->count();
-                    $fundingProgress = $campaign->target_amount > 0 
-                        ? round(($totalFunds / $campaign->target_amount) * 100, 2)
-                        : 0;
+            $campaigns = $this->getFarmerCampaignsWithDetails($farmer);
+            $totalFunds = $this->calculateTotalFunds($campaigns);
 
-                    return [
-                        'id' => $campaign->id,
-                        'project_name' => $campaign->project->name,
-                        'project_description' => $campaign->project->description,
-                        'target_amount' => $campaign->target_amount,
-                        'start_date' => $campaign->start_date->format('Y-m-d'),
-                        'end_date' => $campaign->end_date->format('Y-m-d'),
-                        'status' => $campaign->status,
-                        'funding_details' => [
-                            'total_funds' => $totalFunds,
-                            'investor_count' => $investorCount,
-                            'funding_progress' => $fundingProgress . '%',
-                            'remaining_amount' => max(0, $campaign->target_amount - $totalFunds)
-                        ],
-                        'investments' => $campaign->investments->map(function ($investment) {
-                            return [
-                                'investor_name' => $investment->investor->name,
-                                'amount' => $investment->amount,
-                                'invested_at' => $investment->created_at->format('Y-m-d H:i:s')
-                            ];
-                        })
-                    ];
-                });
-
-            $totalFunds = $campaigns->sum(function ($campaign) {
-                return $campaign['funding_details']['total_funds'];
-            });
-
-            return response()->json([
-                'message' => 'Farmer campaigns report retrieved successfully',
-                'data' => [
-                    'total_campaigns' => $campaigns->count(),
-                    'total_funds_received' => $totalFunds,
-                    'campaigns' => $campaigns
-                ]
+            return $this->sendSuccessResponse('Farmer campaigns report retrieved successfully', [
+                'total_campaigns' => $campaigns->count(),
+                'total_funds_received' => $totalFunds,
+                'campaigns' => $campaigns
             ]);
         } catch (\Exception $e) {
-            \Log::error('Farmer campaigns report error: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
-            return response()->json([
-                'message' => 'Failed to retrieve farmer campaigns report',
-                'error' => $e->getMessage()
-            ], 500);
+            $this->logError('Farmer campaigns report error', $e);
+            return $this->sendErrorResponse('Failed to retrieve farmer campaigns report', $e->getMessage());
         }
     }
 
-    // Investor Reports
+    /**
+     * Get investor dashboard data
+     */
     public function investorDashboard(Request $request)
     {
         try {
             $investor = $request->user();
             
-            if ($investor->role !== 'investor') {
-                return response()->json([
-                    'message' => 'Unauthorized',
-                    'error' => 'Only investors can access this report.'
-                ], 403);
+            if (!$this->isInvestor($investor)) {
+                return $this->sendErrorResponse('Unauthorized', 'Only investors can access this report.', 403);
             }
 
-            $investments = Investment::where('investor_id', $investor->id)
-                ->with(['campaign.project', 'campaign.project.farmer'])
-                ->orderBy('created_at', 'desc')
-                ->get()
-                ->map(function ($investment) {
-                    $campaign = $investment->campaign;
-                    $totalCampaignFunds = $campaign->investments->sum('amount');
-                    $fundingProgress = $campaign->target_amount > 0 
-                        ? round(($totalCampaignFunds / $campaign->target_amount) * 100, 2)
-                        : 0;
+            $investments = $this->getInvestorInvestments($investor);
 
-                    return [
-                        'investment_id' => $investment->id,
-                        'amount' => $investment->amount,
-                        'invested_at' => $investment->created_at->format('Y-m-d H:i:s'),
-                        'campaign' => [
-                            'id' => $campaign->id,
-                            'project_name' => $campaign->project->name,
-                            'project_description' => $campaign->project->description,
-                            'farmer_name' => $campaign->project->farmer->name,
-                            'target_amount' => $campaign->target_amount,
-                            'start_date' => $campaign->start_date->format('Y-m-d'),
-                            'end_date' => $campaign->end_date->format('Y-m-d'),
-                            'status' => $campaign->status,
-                            'funding_details' => [
-                                'total_funds' => $totalCampaignFunds,
-                                'investor_count' => $campaign->investments->count(),
-                                'funding_progress' => $fundingProgress . '%',
-                                'remaining_amount' => max(0, $campaign->target_amount - $totalCampaignFunds)
-                            ]
-                        ]
-                    ];
-                });
-
-            $totalInvestments = $investments->sum('amount');
-            $totalCampaigns = $investments->pluck('campaign.id')->unique()->count();
-
-            return response()->json([
-                'message' => 'Investor dashboard data retrieved successfully',
-                'data' => [
-                    'total_investments' => $totalInvestments,
-                    'total_campaigns' => $totalCampaigns,
-                    'investments' => $investments
-                ]
+            return $this->sendSuccessResponse('Investor dashboard data retrieved successfully', [
+                'total_investments' => $investments->count(),
+                'total_amount_invested' => $investments->sum('amount'),
+                'investments' => $investments
             ]);
         } catch (\Exception $e) {
-            \Log::error('Investor dashboard error: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
-            return response()->json([
-                'message' => 'Failed to retrieve investor dashboard data',
-                'error' => $e->getMessage()
-            ], 500);
+            $this->logError('Investor dashboard error', $e);
+            return $this->sendErrorResponse('Failed to retrieve investor dashboard data', $e->getMessage());
         }
     }
 
-    public function investorCampaignReport(Request $request, $campaignId)
+    /**
+     * Helper methods
+     */
+    private function getUserStatistics()
     {
-        $investment = Investment::where('investor_id', $request->user()->id)
-            ->where('campaign_id', $campaignId)
-            ->with(['campaign', 'campaign.farmer'])
-            ->firstOrFail();
+        return User::select('id', 'name', 'email', 'phone', 'role', 'created_at')
+            ->get()
+            ->map(function ($user) {
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                    'role' => $user->role,
+                    'joined_at' => $user->created_at->format('Y-m-d H:i:s'),
+                    'total_campaigns' => $user->role === 'farmer' ? $user->projects->count() : 0,
+                    'total_investments' => $user->role === 'investor' ? $user->investments->sum('amount') : 0
+                ];
+            });
+    }
 
-        $campaign = $investment->campaign;
-        $totalInvestments = $campaign->investments()->sum('amount');
-        $totalInvestors = $campaign->investors()->count();
+    private function getCampaignStatistics()
+    {
+        return Campaign::with(['project', 'investments'])
+            ->get()
+            ->map(function ($campaign) {
+                $totalFunds = $campaign->investments->sum('amount');
+                $investorCount = $campaign->investments->count();
+                $fundingProgress = $this->calculateFundingProgress($totalFunds, $campaign->target_amount);
 
+                return [
+                    'id' => $campaign->id,
+                    'project_name' => $campaign->project->name,
+                    'farmer_name' => $campaign->project->farmer->name,
+                    'target_amount' => $campaign->target_amount,
+                    'start_date' => $campaign->start_date->format('Y-m-d'),
+                    'end_date' => $campaign->end_date->format('Y-m-d'),
+                    'status' => $campaign->status,
+                    'funding_details' => [
+                        'total_funds' => $totalFunds,
+                        'investor_count' => $investorCount,
+                        'funding_progress' => $fundingProgress . '%',
+                        'remaining_amount' => max(0, $campaign->target_amount - $totalFunds)
+                    ],
+                    'investments' => $this->formatInvestmentDetails($campaign->investments)
+                ];
+            });
+    }
+
+    private function getTotalFunds()
+    {
+        return Investment::sum('amount');
+    }
+
+    private function getFundsByStatus()
+    {
+        return Campaign::with('investments')
+            ->get()
+            ->groupBy('status')
+            ->map(function ($campaigns) {
+                return $campaigns->sum(function ($campaign) {
+                    return $campaign->investments->sum('amount');
+                });
+            });
+    }
+
+    private function getDetailedCampaigns()
+    {
+        return Campaign::with(['farmer', 'investments', 'investors'])
+            ->withCount('investments')
+            ->withSum('investments', 'amount')
+            ->get();
+    }
+
+    private function getFarmerCampaignCount($farmer)
+    {
+        return Campaign::where('farmer_id', $farmer->id)->count();
+    }
+
+    private function getFarmerTotalInvestments($farmer)
+    {
+        return Investment::whereHas('campaign', function($query) use ($farmer) {
+            $query->where('farmer_id', $farmer->id);
+        })->sum('amount');
+    }
+
+    private function getFarmerCampaigns($farmer)
+    {
+        return Campaign::where('farmer_id', $farmer->id)
+            ->with(['investments', 'investors'])
+            ->withSum('investments', 'amount')
+            ->get();
+    }
+
+    private function getFarmerCampaignDetails($farmer, $campaignId)
+    {
+        return Campaign::where('farmer_id', $farmer->id)
+            ->with(['investments', 'investors'])
+            ->withSum('investments', 'amount')
+            ->findOrFail($campaignId);
+    }
+
+    private function getCampaignInvestmentDetails($campaign)
+    {
+        return $campaign->investments()
+            ->with('investor')
+            ->orderBy('created_at', 'desc')
+            ->get();
+    }
+
+    private function getFarmerCampaignsWithDetails($farmer)
+    {
+        return Campaign::whereHas('project', function($query) use ($farmer) {
+                $query->where('farmer_id', $farmer->id);
+            })
+            ->with(['project', 'investments', 'investments.investor'])
+            ->get()
+            ->map(function ($campaign) {
+                $totalFunds = $campaign->investments->sum('amount');
+                $investorCount = $campaign->investments->count();
+                $fundingProgress = $this->calculateFundingProgress($totalFunds, $campaign->target_amount);
+
+                return [
+                    'id' => $campaign->id,
+                    'project_name' => $campaign->project->name,
+                    'project_description' => $campaign->project->description,
+                    'target_amount' => $campaign->target_amount,
+                    'start_date' => $campaign->start_date->format('Y-m-d'),
+                    'end_date' => $campaign->end_date->format('Y-m-d'),
+                    'status' => $campaign->status,
+                    'funding_details' => [
+                        'total_funds' => $totalFunds,
+                        'investor_count' => $investorCount,
+                        'funding_progress' => $fundingProgress . '%',
+                        'remaining_amount' => max(0, $campaign->target_amount - $totalFunds)
+                    ],
+                    'investments' => $this->formatInvestmentDetails($campaign->investments)
+                ];
+            });
+    }
+
+    private function getInvestorInvestments($investor)
+    {
+        return Investment::where('investor_id', $investor->id)
+            ->with(['campaign.project', 'campaign.project.farmer'])
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($investment) {
+                $campaign = $investment->campaign;
+                $totalCampaignFunds = $campaign->investments->sum('amount');
+                $fundingProgress = $this->calculateFundingProgress($totalCampaignFunds, $campaign->target_amount);
+
+                return [
+                    'investment_id' => $investment->id,
+                    'amount' => $investment->amount,
+                    'invested_at' => $investment->created_at->format('Y-m-d H:i:s'),
+                    'campaign' => [
+                        'id' => $campaign->id,
+                        'project_name' => $campaign->project->name,
+                        'farmer_name' => $campaign->project->farmer->name,
+                        'target_amount' => $campaign->target_amount,
+                        'funding_progress' => $fundingProgress . '%',
+                        'status' => $campaign->status
+                    ]
+                ];
+            });
+    }
+
+    private function calculateFundingProgress($totalFunds, $targetAmount)
+    {
+        return $targetAmount > 0 ? round(($totalFunds / $targetAmount) * 100, 2) : 0;
+    }
+
+    private function calculateTotalFunds($campaigns)
+    {
+        return $campaigns->sum(function ($campaign) {
+            return $campaign['funding_details']['total_funds'];
+        });
+    }
+
+    private function formatInvestmentDetails($investments)
+    {
+        return $investments->map(function ($investment) {
+            return [
+                'investor_name' => $investment->investor->name,
+                'amount' => $investment->amount,
+                'invested_at' => $investment->created_at->format('Y-m-d H:i:s')
+            ];
+        });
+    }
+
+    private function isFarmer($user)
+    {
+        return $user->role === 'farmer';
+    }
+
+    private function isInvestor($user)
+    {
+        return $user->role === 'investor';
+    }
+
+    private function logError($message, \Exception $e)
+    {
+        Log::error($message . ': ' . $e->getMessage());
+        Log::error('Stack trace: ' . $e->getTraceAsString());
+    }
+
+    private function sendSuccessResponse($message, $data = [], $status = 200)
+    {
         return response()->json([
-            'investment' => $investment,
-            'campaign' => $campaign,
-            'total_investments' => $totalInvestments,
-            'total_investors' => $totalInvestors,
-        ]);
+            'message' => $message,
+            'data' => $data
+        ], $status);
+    }
+
+    private function sendErrorResponse($message, $error, $status = 500)
+    {
+        return response()->json([
+            'message' => $message,
+            'error' => $error
+        ], $status);
     }
 } 
